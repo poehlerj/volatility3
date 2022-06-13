@@ -122,6 +122,10 @@ class LinuxIntelStacker(interfaces.automagic.StackerLayerInterface):
             elif init_task.has_member('state') and init_task.state.cast('unsigned int') != 0:
                 continue
 
+            # kernel thread has no mm, but 0 needs active_mm?
+            if init_task.mm == 0 and init_task.active_mm == 0:
+                continue
+
             # This we get for free
             aslr_shift = init_task.files.cast('long unsigned int') - module.get_symbol('init_files').address
             kaslr_shift = init_task_address - cls.virtual_to_physical_address(init_task_json_address)
