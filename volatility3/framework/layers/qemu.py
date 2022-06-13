@@ -104,6 +104,8 @@ class QemuSuspendLayer(segmented.NonLinearlySegmentedLayer):
                         return json.loads(data)
                     # No JSON configuration found at the end of the file, return empty dict
                     return dict()
+            else:
+                data = base_layer.read(i, 1)
         raise exceptions.LayerException(name, "Invalid JSON configuration at the end of the file")
 
     def _get_ram_segments(self, index: int, page_size: int) -> Tuple[List[Tuple[int, int, int, int]], int]:
