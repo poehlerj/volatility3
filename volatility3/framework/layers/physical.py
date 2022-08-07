@@ -1,9 +1,16 @@
 # This file is Copyright 2019 Volatility Foundation and licensed under the Volatility Software License 1.0
 # which is available at https://www.volatilityfoundation.org/license/vsl-v1.0
 #
+import datetime
 import logging
+import os
 import threading
 from typing import Any, Dict, IO, List, Optional, Union
+from urllib import request
+from urllib.error import URLError
+from urllib.parse import urlparse, _splitport
+from urllib.request import FileHandler, url2pathname, _safe_gethostbyname
+from urllib.response import addinfourl
 
 from volatility3.framework import exceptions, interfaces, constants
 from volatility3.framework.configuration import requirements
@@ -73,6 +80,52 @@ class DummyLock:
         pass
 
 
+write_access_log = os.environ.get('VOLATILITY_WRITE_ACCESS_LOG') is not None
+use_python_buffering = os.environ.get('VOLATILITY_USE_PYTHON_FILE_BUFFERING') is not None
+
+
+class VolFileHandler(FileHandler):
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.handler_order = 100
+
+    # not entirely sure what the rules are here
+    def open_local_file(self, req):
+        import email.utils
+        import mimetypes
+        host = req.host
+        filename = req.selector
+        localfile = url2pathname(filename)
+        try:
+            stats = os.stat(localfile)
+            size = stats.st_size
+            modified = email.utils.formatdate(stats.st_mtime, usegmt=True)
+            mtype = mimetypes.guess_type(filename)[0]
+            headers = email.message_from_string(
+                'Content-type: %s\nContent-length: %d\nLast-modified: %s\n' %
+                (mtype or 'text/plain', size, modified))
+            if host:
+                host, port = _splitport(host)
+            if not host or \
+                    (not port and _safe_gethostbyname(host) in self.get_names()):
+                if host:
+                    origurl = 'file://' + host + filename
+                else:
+                    origurl = 'file://' + filename
+                if not use_python_buffering:
+                    return addinfourl(
+                        open(localfile, 'rb', buffering=0), headers, origurl)  # buffering set to 0 for direct access
+                else:
+                    return addinfourl(open(localfile, 'rb'), headers, origurl)
+        except OSError as exp:
+            raise URLError(exp)
+        raise URLError('file not on local host')
+
+
+request.build_opener(VolFileHandler)
+
+
 class FileLayer(interfaces.layers.DataLayerInterface):
     """a DataLayer backed by a file on the filesystem."""
 
@@ -85,8 +138,10 @@ class FileLayer(interfaces.layers.DataLayerInterface):
 
         self._write_warning = False
         self._location = self.config["location"]
+        self._file_name = os.path.basename(urlparse(self._location).path)
         self._accessor = resources.ResourceAccessor()
         self._file_: Optional[IO[Any]] = None
+        self._log_file: Optional[IO[Any]] = None
         self._size: Optional[int] = None
         self._maximum_address: Optional[int] = None
         # Construct the lock now (shared if made before threading) in case we ever need it
@@ -147,6 +202,19 @@ class FileLayer(interfaces.layers.DataLayerInterface):
 
         # TODO: implement locking for multi-threading
         with self._lock:
+            if write_access_log:
+                if not self._log_file:
+                    self._log_file = open(f"storage/{self._file_name}.log", "a")
+                self._log_file.write('{"timestamp":'
+                                     + str(int(datetime.datetime.utcnow().timestamp()))
+                                     + ',"fileName":"' + self._file_name + '","totalFileSize":'
+                                     + str(self._size)
+                                     + ',"offset":'
+                                     + str(offset)
+                                     + ',"size":'
+                                     + str(length)
+                                     + '}\n')
+                self._log_file.flush()
             self._file.seek(offset)
             data = self._file.read(length)
 
@@ -190,6 +258,7 @@ class FileLayer(interfaces.layers.DataLayerInterface):
     def destroy(self) -> None:
         """Closes the file handle."""
         self._file.close()
+        self._log_file.close()
 
     def __exit__(self) -> None:
         self.destroy()
