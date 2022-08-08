@@ -319,7 +319,9 @@ class DataLayerInterface(interfaces.configuration.ConfigurableInterface, metacla
                     iterator_value: IteratorValue) -> List[Any]:
         data_to_scan, chunk_end = iterator_value
         data = b''
+        start_address = None
         for layer_name, address, chunk_size in data_to_scan:
+            start_address = address
             try:
                 data += self.context.layers[layer_name].read(address, chunk_size)
             except exceptions.InvalidAddressException:
@@ -330,7 +332,12 @@ class DataLayerInterface(interfaces.configuration.ConfigurableInterface, metacla
             vollog.debug(f"Scan chunk too large: {hex(len(data))}")
 
         progress.value = chunk_end
-        return list(scanner(data, chunk_end - len(data)))
+        ret = list(scanner(data, chunk_end - len(data)))
+        if len(ret) > 0 and start_address is not None:
+            if isinstance(ret[0], tuple):
+                vollog.debug(f"Match found (potential banner) at ({start_address + (ret[0][0] - (chunk_end - len(data))):#016x})")
+
+        return ret
 
     def _scan_metric(self, _scanner: 'ScannerInterface', sections: List[Tuple[int, int]]) -> Callable[[int], float]:
 
