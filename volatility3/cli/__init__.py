@@ -36,7 +36,7 @@ rootlog = logging.getLogger()
 vollog = logging.getLogger(__name__)
 console = logging.StreamHandler()
 console.setLevel(logging.WARNING)
-formatter = logging.Formatter('%(levelname)-8s %(name)-12s: %(message)s')
+formatter = logging.Formatter('%(created)f %(levelname)-8s %(name)-12s: %(message)s')
 # Trim the console down by default
 console.setFormatter(formatter)
 
