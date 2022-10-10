@@ -210,6 +210,7 @@ class CommandLine:
         else:
             console.setLevel(10 - (partial_args.verbosity - 2))
 
+        vollog.debug("Starting Volatility Run")
         vollog.info(f"Volatility plugins path: {volatility3.plugins.__path__}")
         vollog.info(f"Volatility symbols path: {volatility3.symbols.__path__}")
 
@@ -343,6 +344,8 @@ class CommandLine:
                 renderers[args.renderer]().render(constructed.run())
         except (exceptions.VolatilityException) as excp:
             self.process_exceptions(excp)
+
+        vollog.debug("Finished Volatility Run")
 
     @classmethod
     def location_from_file(cls, filename: str) -> str:

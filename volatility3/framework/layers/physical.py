@@ -81,7 +81,32 @@ class DummyLock:
 
 
 write_access_log = os.environ.get('VOLATILITY_WRITE_ACCESS_LOG') is not None
-use_python_buffering = os.environ.get('VOLATILITY_USE_PYTHON_FILE_BUFFERING') is not None
+disable_python_buffering = os.environ.get('VOLATILITY_DISABLE_PYTHON_FILE_BUFFERING') is not None
+dump_file_name = os.environ.get('VOLATILITY_DUMP_FILE')
+
+_log_file = None
+if dump_file_name and write_access_log:
+    _log_file = open(f"storage/{dump_file_name}.log", "a")
+
+
+class trackingAddInfoUrl(addinfourl):
+
+    def __init__(self, file_size: int, fp: IO[bytes], headers, url: str, code = ...) -> None:
+        super().__init__(fp, headers, url, code)
+        self.file_size = file_size
+
+    def read(self, n: int = ...) -> bytes:
+        if _log_file:
+            _log_file.write(
+                '{"timestamp":' + str(int(datetime.datetime.utcnow().timestamp() * 1000))
+                + ',"fileName":"' + dump_file_name
+                + '","totalFileSize":' + str(self.file_size)
+                + ',"offset":' + str(self.fp.tell())
+                + ',"size":' + str(n)
+                + '}\n')
+            _log_file.flush()
+
+        return self.fp.read(n)
 
 
 class VolFileHandler(FileHandler):
@@ -113,11 +138,15 @@ class VolFileHandler(FileHandler):
                     origurl = 'file://' + host + filename
                 else:
                     origurl = 'file://' + filename
-                if not use_python_buffering:
-                    return addinfourl(
-                        open(localfile, 'rb', buffering=0), headers, origurl)  # buffering set to 0 for direct access
+                if disable_python_buffering:
+                    fd = open(localfile, 'rb', buffering=0)  # buffering set to 0 for direct access
                 else:
-                    return addinfourl(open(localfile, 'rb'), headers, origurl)
+                    fd = open(localfile, 'rb')
+
+                if dump_file_name and filename.endswith(dump_file_name):
+                    return trackingAddInfoUrl(size, fd, headers, origurl)
+                else:
+                    return addinfourl(fd, headers, origurl)
         except OSError as exp:
             raise URLError(exp)
         raise URLError('file not on local host')
@@ -138,10 +167,8 @@ class FileLayer(interfaces.layers.DataLayerInterface):
 
         self._write_warning = False
         self._location = self.config["location"]
-        self._file_name = os.path.basename(urlparse(self._location).path)
         self._accessor = resources.ResourceAccessor()
         self._file_: Optional[IO[Any]] = None
-        self._log_file: Optional[IO[Any]] = None
         self._size: Optional[int] = None
         self._maximum_address: Optional[int] = None
         # Construct the lock now (shared if made before threading) in case we ever need it
@@ -202,19 +229,6 @@ class FileLayer(interfaces.layers.DataLayerInterface):
 
         # TODO: implement locking for multi-threading
         with self._lock:
-            if write_access_log:
-                if not self._log_file:
-                    self._log_file = open(f"storage/{self._file_name}.log", "a")
-                self._log_file.write('{"timestamp":'
-                                     + str(int(datetime.datetime.utcnow().timestamp()))
-                                     + ',"fileName":"' + self._file_name + '","totalFileSize":'
-                                     + str(self._size)
-                                     + ',"offset":'
-                                     + str(offset)
-                                     + ',"size":'
-                                     + str(length)
-                                     + '}\n')
-                self._log_file.flush()
             self._file.seek(offset)
             data = self._file.read(length)
 
@@ -258,11 +272,10 @@ class FileLayer(interfaces.layers.DataLayerInterface):
     def destroy(self) -> None:
         """Closes the file handle."""
         self._file.close()
-        self._log_file.close()
 
     def __exit__(self) -> None:
         self.destroy()
 
     @classmethod
     def get_requirements(cls) -> List[interfaces.configuration.RequirementInterface]:
-        return [requirements.StringRequirement(name = 'location', optional = False)]
+        return [requirements.StringRequirement(name='location', optional=False)]
